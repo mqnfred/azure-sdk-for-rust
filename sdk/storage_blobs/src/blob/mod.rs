@@ -43,6 +43,19 @@ fn get_creation_time(h: &Headers) -> azure_core::Result<Option<OffsetDateTime>> 
     }
 }
 
+#[cfg(feature = "azurite_workaround")]
+fn get_last_modified(h: &Headers) -> azure_core::Result<Option<OffsetDateTime>> {
+    if let Some(last_motified) = h.get_optional_str(&headers::LAST_MODIFIED) {
+        // Check that the creation time is valid
+        let last_motified =
+            date::parse_rfc1123(last_motified).unwrap_or_else(|_| OffsetDateTime::now_utc());
+        Ok(Some(last_motified))
+    } else {
+        // Not having a creation time is ok
+        Ok(None)
+    }
+}
+
 create_enum!(
     BlobType,
     (BlockBlob, "BlockBlob"),
@@ -112,14 +125,23 @@ pub struct BlobProperties {
         rename = "Creation-Time"
     )]
     pub creation_time: Option<OffsetDateTime>,
+    #[cfg(not(feature = "azurite_workaround"))]
     #[serde(with = "azure_core::date::rfc1123", rename = "Last-Modified")]
     pub last_modified: OffsetDateTime,
+    #[cfg(feature = "azurite_workaround")]
+    #[serde(
+        default,
+        with = "azure_core::date::rfc1123::option",
+        rename = "Last-Modified"
+    )]
+    pub last_modified: Option<OffsetDateTime>,
     #[serde(default, with = "azure_core::date::rfc1123::option")]
     pub last_access_time: Option<OffsetDateTime>,
+    #[serde(default)]
     pub etag: Etag,
     #[serde(rename = "Content-Length")]
     pub content_length: u64,
-    #[serde(rename = "Content-Type")]
+    #[serde(default, rename = "Content-Type")]
     pub content_type: String,
     #[serde(rename = "Content-Encoding")]
     pub content_encoding: Option<String>,
@@ -199,7 +221,10 @@ impl Blob {
             .to_string();
 
         let content_length = h.get_as(&headers::CONTENT_LENGTH)?;
+        #[cfg(not(feature = "azurite_workaround"))]
         let last_modified = from_azure_time(h.get_str(&headers::LAST_MODIFIED)?)?;
+        #[cfg(feature = "azurite_workaround")]
+        let last_modified = get_creation_time(h)?;
         let etag = h.get_as(&headers::ETAG)?;
         let blob_sequence_number = h.get_optional_as(&headers::BLOB_SEQUENCE_NUMBER)?;
         let blob_type = h.get_as(&headers::BLOB_TYPE)?;

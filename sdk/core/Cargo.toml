@@ -53,7 +53,7 @@ tokio = { version = "1.0", features = ["default", "macros", "rt", "time"] }
 thiserror = "1.0"
 
 [features]
-default = []
+default = ["azurite_workaround"]
 enable_reqwest = ["reqwest/default-tls"]
 enable_reqwest_gzip = ["reqwest/gzip"]
 enable_reqwest_rustls = ["reqwest/rustls-tls"]

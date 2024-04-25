@@ -31,3 +31,9 @@ impl fmt::Display for Etag {
         write!(f, "{}", self.0)
     }
 }
+
+impl Default for Etag {
+    fn default() -> Self {
+        Self("".into())
+    }
+}
