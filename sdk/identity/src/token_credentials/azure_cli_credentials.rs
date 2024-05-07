@@ -231,6 +231,7 @@ impl AzureCliCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
         let tr = Self::get_access_token(Some(scopes))?;
         let expires_on = tr.expires_on()?;
+        log::info!("token acquired from Azure CLI, expires_on: {:?}", expires_on);
         Ok(AccessToken::new(tr.access_token, expires_on))
     }
 }

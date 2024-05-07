@@ -1,10 +1,12 @@
 use crate::oauth2_http_client::Oauth2HttpClient;
 use crate::token_credentials::cache::TokenCache;
+use crate::timeout::TimeoutExt;
 use azure_core::{
     auth::{AccessToken, Secret, TokenCredential},
     authority_hosts::AZURE_PUBLIC_CLOUD,
-    error::{ErrorKind, ResultExt},
+    error::{Error, ErrorKind, ResultExt},
     HttpClient, Url,
+    sleep::sleep,
 };
 use oauth2::{basic::BasicClient, AuthType, AuthUrl, Scope, TokenUrl};
 use std::{str, sync::Arc};
@@ -122,28 +124,54 @@ impl ClientSecretCredential {
         let client = BasicClient::new(
             self.client_id.clone(),
             self.client_secret.clone(),
-            auth_url,
-            Some(token_url),
+            auth_url.clone(),
+            Some(token_url.clone()),
         )
         .set_auth_type(AuthType::RequestBody);
 
-        let scopes = scopes.iter().map(|x| Scope::new(x.to_string()));
         let oauth_http_client = Oauth2HttpClient::new(self.http_client.clone());
-        let token_result = client
-            .exchange_client_credentials()
-            .add_scopes(scopes)
-            .request_async(|request| oauth_http_client.request(request))
-            .await
-            .map(|r| {
-                use oauth2::TokenResponse as _;
-                AccessToken::new(
-                    Secret::new(r.access_token().secret().to_owned()),
-                    OffsetDateTime::now_utc() + r.expires_in().unwrap_or_default(),
-                )
-            })
-            .context(ErrorKind::Credential, "request token error")?;
 
-        Ok(token_result)
+        let mut retries_left = 5;
+        let mut backoff = std::time::Duration::from_secs(5);
+        while retries_left > 0 {
+            let call_start = std::time::Instant::now();
+            match client
+                .exchange_client_credentials()
+                .add_scopes(scopes.iter().map(|x| Scope::new(x.to_string())))
+                .request_async(|request| oauth_http_client.request(request))
+                .timeout(std::time::Duration::from_secs(10)).await {
+                Ok(Ok(r)) => {
+                    use oauth2::TokenResponse as _;
+                    let now = std::time::Instant::now();
+                    let elapsed = now.duration_since(call_start).as_millis();
+                    let expires_in = r.expires_in().unwrap_or_default();
+                    let secret = r.access_token().secret().to_owned();
+                    log::info!("client secret token acquired in {}ms, secret={}, expires in={}", elapsed, secret.len(), expires_in.as_secs());
+                    return Ok(AccessToken::new(
+                        Secret::new(secret),
+                        OffsetDateTime::now_utc() + expires_in,
+                    ));
+                },
+
+                Ok(Err(err)) => {
+                    log::error!("client secret token error: {:?}", err);
+                    return Err(err).context(ErrorKind::Credential, "request token error");
+                },
+
+                Err(err) => {
+                    let elapsed = call_start.elapsed().as_millis();
+                    log::error!("client secret token timeout: {}ms", elapsed);
+                    sleep(backoff).await;
+                    retries_left -= 1;
+                    backoff *= 2;
+                },
+            }
+        }
+
+        Err(Error::message(
+            ErrorKind::Credential,
+            "failed to acquire token after 5 retries",
+        ))
     }
 }
 

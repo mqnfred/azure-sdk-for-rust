@@ -5,7 +5,7 @@ use std::{collections::HashMap, time::Duration};
 use time::OffsetDateTime;
 
 fn is_expired(token: &AccessToken) -> bool {
-    token.expires_on < OffsetDateTime::now_utc() + Duration::from_secs(20)
+    token.expires_on < OffsetDateTime::now_utc() + Duration::from_secs(120)
 }
 
 #[derive(Debug)]
